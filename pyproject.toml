@@ -1,0 +1,33 @@
+[project]
+name = "sentence-agent"
+version = "0.1.0"
+description = "地道句子本：一个帮你把中文说成地道英文、读懂英文、纠正你的英文，并把每一句存进句子本复习的桌面 agent。"
+requires-python = ">=3.10"
+dependencies = [
+    "anthropic>=1.8,<2",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pywebview>=5.0",
+    "keyring>=25.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "pyinstaller>=6.0"]
+
+[project.scripts]
+sentence-agent = "sentence_agent.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+sentence_agent = ["static/**/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"

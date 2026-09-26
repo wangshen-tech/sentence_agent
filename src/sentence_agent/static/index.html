@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>地道句子本</title>
+  <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+  <div class="app">
+    <nav class="rail" aria-label="主导航">
+      <div class="brand"><span class="brand-mark" aria-hidden="true"><i>中</i><i>EN</i></span><span>地道句子本</span></div>
+      <button class="nav" data-action="nav" data-view="chat" aria-current="page">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 4.5h12a1.5 1.5 0 0 1 1.5 1.5v7a1.5 1.5 0 0 1-1.5 1.5H9l-4 3v-3H4A1.5 1.5 0 0 1 2.5 13V6A1.5 1.5 0 0 1 4 4.5z"/></svg>
+        <span>对话</span>
+      </button>
+      <button class="nav" data-action="nav" data-view="book">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 3.5h9.5A2.5 2.5 0 0 1 16 6v10.5H6A2 2 0 0 1 4 14.5z"/><path d="M4 14.5A2 2 0 0 1 6 12.5h10"/><path d="M8 7h5"/></svg>
+        <span>句子本</span><span class="badge" id="nav-book-count"></span>
+      </button>
+      <button class="nav" data-action="nav" data-view="review">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="5" width="11" height="12" rx="2"/><path d="M6.5 3h9A1.5 1.5 0 0 1 17 4.5v10"/></svg>
+        <span>复习</span><span class="badge due" id="nav-due-count"></span>
+      </button>
+      <span class="rail-grow"></span>
+      <button class="nav" data-action="nav" data-view="settings">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="2.6"/><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4"/></svg>
+        <span>设置</span><span class="badge warn" id="nav-key-warn"></span>
+      </button>
+      <p class="rail-foot" id="rail-foot"></p>
+    </nav>
+
+    <!-- 对话 -->
+    <main class="view view-chat" id="view-chat">
+      <aside class="threads" aria-label="对话列表">
+        <div class="threads-head">
+          <span>对话</span>
+          <button class="btn sm" data-action="new-chat">新对话</button>
+        </div>
+        <div class="threads-list" id="threads"></div>
+      </aside>
+      <section class="chat">
+        <div class="chat-scroll" id="chat-scroll">
+          <div class="chat-inner" id="chat-items"></div>
+        </div>
+        <div class="composer-wrap">
+          <p class="chat-notice" id="chat-notice" hidden></p>
+          <form class="composer" id="composer">
+            <textarea id="composer-input" rows="1" placeholder="发一句中文或英文。比如：这事儿我得再考虑考虑。" aria-label="消息"></textarea>
+            <button class="btn primary" type="submit" id="composer-send">发送</button>
+            <button class="btn" type="button" id="composer-stop" data-action="stop" hidden>停止</button>
+          </form>
+          <p class="composer-hint">回车发送，Shift + 回车换行。中文会给你地道英文，英文会帮你解析；想检查自己写的英文，可以加一句“这样说对吗”。</p>
+        </div>
+      </section>
+    </main>
+
+    <!-- 句子本 -->
+    <main class="view view-book" id="view-book" hidden>
+      <div class="page">
+        <header class="page-head">
+          <div>
+            <h1>句子本</h1>
+            <p class="page-sub" id="book-sum"></p>
+          </div>
+          <div class="page-actions">
+            <button class="btn" data-action="export">导出 CSV</button>
+            <button class="btn primary" data-action="nav" data-view="review" id="book-review">开始复习</button>
+          </div>
+        </header>
+        <div class="toolbar">
+          <div class="seg" role="group" aria-label="遮住哪一边">
+            <button data-action="cover" data-cover="none" aria-pressed="true">全部显示</button>
+            <button data-action="cover" data-cover="zh" aria-pressed="false">遮住中文</button>
+            <button data-action="cover" data-cover="en" aria-pressed="false">遮住英文</button>
+          </div>
+          <select id="book-filter" aria-label="筛选">
+            <option value="all">全部句子</option>
+            <option value="due">该复习的</option>
+            <option value="weak">还不熟的</option>
+            <option value="known">已记住的</option>
+          </select>
+          <button class="btn" data-action="shuffle" id="book-shuffle" aria-pressed="false">打乱顺序</button>
+          <button class="btn" data-action="recover" id="book-recover" hidden>全部重新遮住</button>
+          <span class="grow"></span>
+          <input id="book-search" type="search" placeholder="搜索中文或英文" autocomplete="off">
+        </div>
+        <p class="book-stat" id="book-stat"></p>
+        <div class="book-head" aria-hidden="true"><span>中文</span><span>English</span><span></span></div>
+        <div id="book-list"></div>
+      </div>
+    </main>
+
+    <!-- 复习 -->
+    <main class="view view-review" id="view-review" hidden>
+      <div class="review-shell">
+        <div class="rv-top">
+          <div class="rv-bar"><span id="rv-bar"></span></div>
+          <span class="rv-count" id="rv-count"></span>
+        </div>
+        <div class="rv-body" id="rv-body"></div>
+      </div>
+    </main>
+
+    <!-- 设置 -->
+    <main class="view view-settings" id="view-settings" hidden>
+      <div class="page narrow" id="settings"></div>
+    </main>
+  </div>
+
+  <div class="drawer" id="drawer" hidden>
+    <div class="drawer-scrim" data-action="close-drawer"></div>
+    <aside class="drawer-panel" role="dialog" aria-modal="true" aria-label="句子详情">
+      <div class="drawer-bar"><span>句子详情</span><button class="icon-btn" data-action="close-drawer" aria-label="关闭">✕</button></div>
+      <div id="drawer-body"></div>
+    </aside>
+  </div>
+  <div class="toast" id="toast" hidden></div>
+
+  <script type="module" src="/static/js/main.js"></script>
+</body>
+</html>
