@@ -50,6 +50,35 @@ DEFAULT_EFFORT = "medium"
 # Past this many input tokens a conversation gets expensive to continue; the app suggests a new one.
 LONG_CONVERSATION_TOKENS = 120_000
 
+ANTHROPIC_OFFICIAL_URL = "https://api.anthropic.com"
+PROTOCOLS = ("anthropic", "openai")
+
+
+@dataclass(frozen=True)
+class Preset:
+    key: str
+    name: str
+    protocol: str
+    base_url: str
+    note: str
+
+
+# Starting points for the "add provider" form. Every field stays editable; model names come from the
+# provider's own model list (fetched with the key) rather than being hard-coded here.
+PRESETS: tuple[Preset, ...] = (
+    Preset("anthropic", "Anthropic 官方", "anthropic", "", "Claude 官方接口，功能最全（思考过程、缓存、拒答兜底）"),
+    Preset("openai", "OpenAI", "openai", "https://api.openai.com/v1", ""),
+    Preset("deepseek", "DeepSeek", "openai", "https://api.deepseek.com", ""),
+    Preset("qwen", "通义千问（阿里云百炼）", "openai", "https://dashscope.aliyuncs.com/compatible-mode/v1", ""),
+    Preset("kimi", "Kimi（月之暗面）", "openai", "https://api.moonshot.cn/v1", ""),
+    Preset("glm", "智谱 GLM", "openai", "https://open.bigmodel.cn/api/paas/v4", ""),
+    Preset("siliconflow", "硅基流动", "openai", "https://api.siliconflow.cn/v1", ""),
+    Preset("openrouter", "OpenRouter", "openai", "https://openrouter.ai/api/v1", ""),
+    Preset("gemini", "Google Gemini", "openai", "https://generativelanguage.googleapis.com/v1beta/openai/", ""),
+    Preset("relay-openai", "中转站（OpenAI 格式）", "openai", "", "填中转站给的接口地址，一般以 /v1 结尾"),
+    Preset("relay-anthropic", "中转站（Anthropic 格式）", "anthropic", "", "填中转站给的 Anthropic 接口地址，一般不带 /v1"),
+)
+
 
 def estimate_cost(model: str, input_tokens: int, output_tokens: int, cache_read: int, cache_write: int) -> float:
     info = MODELS_BY_ID.get(model)

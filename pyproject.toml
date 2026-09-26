@@ -1,10 +1,11 @@
 [project]
 name = "sentence-agent"
 version = "0.1.0"
-description = "地道句子本：一个帮你把中文说成地道英文、读懂英文、纠正你的英文，并把每一句存进句子本复习的桌面 agent。"
+description = "地道句子本：一个帮你把中文说成地道英文、读懂英文、纠正你的英文，并把每一句存进句子本复习的桌面 agent。支持 Claude、OpenAI 兼容接口和中转站。"
 requires-python = ">=3.10"
 dependencies = [
     "anthropic>=1.8,<2",
+    "openai>=3.19,<4",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "pywebview>=5.0",

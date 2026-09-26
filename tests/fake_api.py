@@ -76,15 +76,68 @@ class FakeAPI:
         self.script = list(script)
         self.requests: list[dict[str, Any]] = []
         self.headers: list[dict[str, str]] = []
+        self.urls: list[str] = []
 
     def handler(self, request: httpx2.Request) -> httpx2.Response:
         self.requests.append(json.loads(request.content))
         self.headers.append(dict(request.headers))
+        self.urls.append(str(request.url))
         step = self.script.pop(0)
         if isinstance(step, httpx2.Response):
             return step
         return httpx2.Response(200, headers={"content-type": "text/event-stream"}, content=_sse(step))
 
-    def client(self) -> AsyncAnthropic:
+    def client(self, base_url: str | None = None) -> AsyncAnthropic:
         transport = httpx2.MockTransport(self.handler)
-        return AsyncAnthropic(api_key="sk-ant-test", max_retries=0, http_client=DefaultAsyncHttpxClient(transport=transport))
+        return AsyncAnthropic(
+            api_key="sk-ant-test", base_url=base_url, max_retries=0, http_client=DefaultAsyncHttpxClient(transport=transport)
+        )
+
+
+# ---------- OpenAI-compatible Chat Completions ----------
+
+
+def chunk(delta: dict[str, Any] | None = None, finish: str | None = None, usage: dict[str, int] | None = None) -> dict[str, Any]:
+    body: dict[str, Any] = {"id": "chatcmpl-test", "object": "chat.completion.chunk", "created": 1, "model": "test-model"}
+    body["choices"] = [] if delta is None else [{"index": 0, "delta": delta, "finish_reason": finish}]
+    if usage:
+        body["usage"] = usage
+    return body
+
+
+def openai_tool_call(call_id: str, name: str, arguments: dict[str, Any], pieces: int = 3) -> list[dict[str, Any]]:
+    raw = json.dumps(arguments, ensure_ascii=False)
+    size = max(1, len(raw) // pieces + 1)
+    parts = [raw[i : i + size] for i in range(0, len(raw), size)]
+    first = chunk({"role": "assistant", "content": None, "tool_calls": [{"index": 0, "id": call_id, "type": "function", "function": {"name": name, "arguments": ""}}]})
+    rest = [chunk({"tool_calls": [{"index": 0, "function": {"arguments": p}}]}) for p in parts]
+    return [first, *rest]
+
+
+def openai_text(*pieces: str) -> list[dict[str, Any]]:
+    return [chunk({"role": "assistant", "content": p}) for p in pieces]
+
+
+class FakeOpenAI:
+    """Replays one scripted Chat Completions stream per request."""
+
+    def __init__(self, script: list[list[dict[str, Any]] | httpx2.Response]):
+        self.script = list(script)
+        self.requests: list[dict[str, Any]] = []
+        self.urls: list[str] = []
+
+    def handler(self, request: httpx2.Request) -> httpx2.Response:
+        self.requests.append(json.loads(request.content))
+        self.urls.append(str(request.url))
+        step = self.script.pop(0)
+        if isinstance(step, httpx2.Response):
+            return step
+        body = "".join(f"data: {json.dumps(c, ensure_ascii=False)}\n\n" for c in step) + "data: [DONE]\n\n"
+        return httpx2.Response(200, headers={"content-type": "text/event-stream"}, content=body.encode())
+
+    def client(self, base_url: str = "https://relay.test/v1") -> "AsyncOpenAI":
+        from openai import AsyncOpenAI
+        from openai import DefaultAsyncHttpxClient as OpenAIHttpClient
+
+        transport = httpx2.MockTransport(self.handler)
+        return AsyncOpenAI(api_key="sk-test", base_url=base_url, max_retries=0, http_client=OpenAIHttpClient(transport=transport))

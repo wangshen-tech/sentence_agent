@@ -104,15 +104,17 @@ class ToolContext:
     saved_card_ids: list[int] = field(default_factory=list)
 
 
-def build_tools(ctx: ToolContext) -> list[Any]:
+def build_tools(ctx: ToolContext, eager_input_streaming: bool = True) -> list[Any]:
+    """Tools bound to one turn. Eager input streaming is only for the official Anthropic API."""
     store = ctx.store
+    stream_inputs = True if eager_input_streaming else None
 
     def _save(kind: str, zh: str, en: str, source: str, detail: dict[str, Any]) -> str:
         card_id = store.add_card(kind, zh, en, source=source, detail=detail, conversation_id=ctx.conversation_id)
         ctx.saved_card_ids.append(card_id)
         return _ok(card_id=card_id, notebook_total=store.count_cards())
 
-    @beta_async_tool(eager_input_streaming=True)
+    @beta_async_tool(eager_input_streaming=stream_inputs)
     async def save_translation(
         zh: str,
         best: str,
@@ -134,7 +136,7 @@ def build_tools(ctx: ToolContext) -> list[Any]:
         detail = {"best": best, "versions": _dump(versions), "phrases": _dump(phrases), "avoid": _dump(avoid)}
         return _save("zh2en", zh, best, zh, detail)
 
-    @beta_async_tool(eager_input_streaming=True)
+    @beta_async_tool(eager_input_streaming=stream_inputs)
     async def save_analysis(
         en: str,
         zh: str,
@@ -167,7 +169,7 @@ def build_tools(ctx: ToolContext) -> list[Any]:
         }
         return _save("en2zh", zh, en, en, detail)
 
-    @beta_async_tool(eager_input_streaming=True)
+    @beta_async_tool(eager_input_streaming=stream_inputs)
     async def save_correction(
         original: str,
         verdict: str,
@@ -205,7 +207,7 @@ def build_tools(ctx: ToolContext) -> list[Any]:
         }
         return _save("check", zh, best or corrected or original, original, detail)
 
-    @beta_async_tool(eager_input_streaming=True)
+    @beta_async_tool(eager_input_streaming=stream_inputs)
     async def search_notebook(query: str, limit: int = 5) -> str:
         """在用户的句子本里查以前存过的句子。
 
@@ -221,7 +223,7 @@ def build_tools(ctx: ToolContext) -> list[Any]:
         ]
         return json.dumps({"results": rows, "count": len(rows)}, ensure_ascii=False)
 
-    @beta_async_tool(eager_input_streaming=True)
+    @beta_async_tool(eager_input_streaming=stream_inputs)
     async def remember_weak_point(topic: str, note: str, example: str = "") -> str:
         """记下用户反复出现的易错点，存进长期记忆，以后的对话里也能看到。
 
@@ -235,7 +237,7 @@ def build_tools(ctx: ToolContext) -> list[Any]:
         row = store.upsert_note(topic, note, example)
         return _ok(topic=row["topic"], count=row["count"])
 
-    @beta_async_tool(eager_input_streaming=True)
+    @beta_async_tool(eager_input_streaming=stream_inputs)
     async def get_study_overview() -> str:
         """查看用户的学习概况：句子本总数、今天该复习多少、记住了多少，以及记下的易错点。
 

@@ -50,7 +50,10 @@
             <button class="btn primary" type="submit" id="composer-send">发送</button>
             <button class="btn" type="button" id="composer-stop" data-action="stop" hidden>停止</button>
           </form>
-          <p class="composer-hint">回车发送，Shift + 回车换行。中文会给你地道英文，英文会帮你解析；想检查自己写的英文，可以加一句“这样说对吗”。</p>
+          <div class="composer-meta">
+            <p class="composer-hint">回车发送，Shift + 回车换行。想检查自己写的英文，可以加一句“这样说对吗”。</p>
+            <label class="switcher"><span>模型</span><select id="provider-switch" aria-label="切换服务商和模型"></select></label>
+          </div>
         </div>
       </section>
     </main>

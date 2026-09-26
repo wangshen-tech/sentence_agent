@@ -9,7 +9,7 @@ ROOT = Path(SPECPATH).parent
 SRC = ROOT / "src"
 
 datas = [(str(SRC / "sentence_agent" / "static"), "sentence_agent/static")]
-datas += copy_metadata("keyring") + copy_metadata("anthropic")
+datas += copy_metadata("keyring") + copy_metadata("anthropic") + copy_metadata("openai")
 
 hiddenimports = (
     collect_submodules("uvicorn")

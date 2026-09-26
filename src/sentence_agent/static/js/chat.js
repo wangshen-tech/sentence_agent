@@ -120,13 +120,14 @@ function scrollToBottom() {
 function welcomeHTML() {
   const s = app.state;
   const setup = s && !s.has_key ? `<div class="setup-box">
-      <h3>先设置 API key</h3>
-      <p>这个软件通过 Anthropic API 调用 Claude。API 按用量付费，和 Claude 的会员订阅是分开计费的。</p>
+      <h3>先设置一个服务商</h3>
+      <p>这个软件通过大模型的 API 工作，按用量付费（和各家的会员订阅分开计费）。下面几种都可以：</p>
       <ol>
-        <li>打开 <b>console.anthropic.com</b>，登录后在 Billing 里充值一点额度。</li>
-        <li>在 API Keys 里创建一个 key，复制下来。</li>
-        <li>回到这里，在「设置」里粘贴保存。key 会存进 Mac 的钥匙串，不会写进任何文件。</li>
+        <li><b>Anthropic 官方</b>：在 console.anthropic.com 创建 key。功能最全。</li>
+        <li><b>其他服务商</b>：OpenAI、DeepSeek、通义千问、Kimi、智谱、硅基流动、OpenRouter、Gemini 等，选好预设、填 key 就行。</li>
+        <li><b>中转站</b>：填中转站给的接口地址和 key，OpenAI 格式和 Anthropic 格式都支持。</li>
       </ol>
+      <p>key 会存进 Mac 的钥匙串，不会写进任何文件。</p>
       <button class="btn primary" data-action="nav" data-view="settings">去设置</button>
     </div>` : '';
   return `<div class="welcome">

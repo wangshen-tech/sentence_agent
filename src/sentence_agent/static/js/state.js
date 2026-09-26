@@ -1,6 +1,6 @@
 // App-wide state shared by the views: settings, key status, notebook counts.
 import { api } from './api.js';
-import { $ } from './util.js';
+import { $, esc } from './util.js';
 
 export const app = { state: null, view: 'chat' };
 
@@ -20,6 +20,12 @@ export async function refreshStats() {
 export function renderBadges() {
   const s = app.state;
   if (!s) return;
+  const select = $('#provider-switch');
+  if (select && s.providers) {
+    select.innerHTML = s.providers
+      .map((p) => `<option value="${p.id}" ${p.id === s.active_provider ? 'selected' : ''} ${p.ready ? '' : 'disabled'}>${esc(p.name)} · ${esc(p.model || '未选模型')}${p.ready ? '' : '（未设置 key）'}</option>`)
+      .join('');
+  }
   $('#nav-book-count').textContent = s.stats.total ? String(s.stats.total) : '';
   $('#nav-due-count').textContent = s.stats.due ? String(s.stats.due) : '';
   $('#nav-key-warn').textContent = s.has_key ? '' : '!';

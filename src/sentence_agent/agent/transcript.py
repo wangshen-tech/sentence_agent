@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..store import Store
-from .session import _parse_result
+from .common import parse_result
 from .tools import SAVE_TOOLS
 
 
@@ -36,7 +36,7 @@ def build_transcript(store: Store, conversation_id: int) -> list[dict[str, Any]]
                 if isinstance(b, dict) and b.get("type") == "tool_result":
                     tool = tools_by_id.get(b.get("tool_use_id", ""))
                     if tool is not None:
-                        tool["result"] = _parse_result(b.get("content"))
+                        tool["result"] = parse_result(b.get("content"))
                         tool["is_error"] = bool(b.get("is_error"))
             if texts:
                 turn = None
@@ -52,6 +52,8 @@ def build_transcript(store: Store, conversation_id: int) -> list[dict[str, Any]]
             kind = b.get("type")
             if kind == "thinking" and b.get("thinking"):
                 turn["blocks"].append({"type": "thinking", "text": b["thinking"]})
+            elif kind == "reasoning" and b.get("text"):
+                turn["blocks"].append({"type": "thinking", "text": b["text"]})
             elif kind == "text" and b.get("text"):
                 turn["blocks"].append({"type": "text", "text": b["text"]})
             elif kind == "tool_use":

@@ -13,11 +13,13 @@ import json
 import shutil
 import subprocess
 import time
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import anthropic
+import openai
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -26,6 +28,7 @@ from pydantic import BaseModel
 from . import __version__, config, credentials, srs
 from .agent.session import AgentService
 from .agent.transcript import build_transcript
+from .providers import list_models
 from .store import CARD_FILTERS, REVIEW_SCOPES, Store
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -37,12 +40,23 @@ class ChatIn(BaseModel):
 
 
 class SettingsIn(BaseModel):
-    model: str | None = None
     effort: str | None = None
 
 
-class KeyIn(BaseModel):
-    api_key: str
+class ProviderIn(BaseModel):
+    name: str
+    protocol: str
+    base_url: str = ""
+    model: str
+    api_key: str | None = None
+    activate: bool = False
+
+
+class ModelsIn(BaseModel):
+    protocol: str
+    base_url: str = ""
+    api_key: str | None = None
+    provider_id: str | None = None
 
 
 class CardPatch(BaseModel):
@@ -107,28 +121,35 @@ def create_app(store: Store, agent: AgentService, token: str, static_dir: Path =
         today = srs.start_of_day(now)
         month = datetime.fromtimestamp(now).replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp()
 
-        def total(since: float) -> float:
-            return sum(
+        def total(since: float) -> dict[str, Any]:
+            rows = store.usage_by_model(since)
+            priced = [r for r in rows if r["model"] in config.MODELS_BY_ID]
+            cost = sum(
                 config.estimate_cost(r["model"], r["input_tokens"], r["output_tokens"], r["cache_read"], r["cache_write"])
-                for r in store.usage_by_model(since)
+                for r in priced
             )
+            tokens = sum(r["input_tokens"] + r["output_tokens"] + r["cache_read"] + r["cache_write"] for r in rows)
+            unpriced = sorted({r["model"] for r in rows} - {r["model"] for r in priced})
+            return {"cost": round(cost, 4), "tokens": tokens, "unpriced_models": unpriced}
 
-        return {"today": round(total(today), 4), "month": round(total(month), 4)}
+        return {"today": total(today), "month": total(month)}
 
     @app.get("/api/state")
     async def state() -> dict[str, Any]:
-        key = credentials.get_api_key()
+        providers = agent.providers.describe()
+        active = agent.providers.active()
+        active_info = next(p for p in providers if p["id"] == active.id)
         return {
             "version": __version__,
-            "has_key": bool(key),
-            "key_hint": credentials.key_hint(key),
-            "key_source": credentials.key_source(),
-            "model": agent.model(),
-            "effort": agent.effort(),
-            "models": [
+            "has_key": active_info["ready"],
+            "providers": providers,
+            "active_provider": active.id,
+            "presets": [asdict(p) for p in config.PRESETS],
+            "anthropic_models": [
                 {"id": m.id, "label": m.label, "note": m.note, "input": m.input_per_mtok, "output": m.output_per_mtok}
                 for m in config.MODELS
             ],
+            "effort": agent.effort(),
             "efforts": [{"id": i, "label": label, "note": note} for i, label, note in config.EFFORTS],
             "data_dir": str(config.data_dir()),
             "stats": store.stats(),
@@ -138,46 +159,110 @@ def create_app(store: Store, agent: AgentService, token: str, static_dir: Path =
 
     @app.post("/api/settings")
     async def update_settings(body: SettingsIn) -> dict[str, Any]:
-        if body.model is not None:
-            if body.model not in config.MODELS_BY_ID:
-                raise HTTPException(400, "未知的模型")
-            store.set_setting("model", body.model)
         if body.effort is not None:
             if body.effort not in config.EFFORT_IDS:
                 raise HTTPException(400, "未知的思考深度")
             store.set_setting("effort", body.effort)
-        return {"model": agent.model(), "effort": agent.effort()}
+        return {"effort": agent.effort()}
 
-    @app.put("/api/key")
-    async def save_key(body: KeyIn) -> dict[str, Any]:
-        key = body.api_key.strip()
+    # ---------- providers ----------
+
+    def _clean_key(raw: str | None) -> str | None:
+        key = (raw or "").strip()
         if not key:
-            raise HTTPException(400, "API key 不能是空的")
-        warning = None
-        try:
-            # The Models API is free to call, so it makes a cheap check that the key works.
-            async with anthropic.AsyncAnthropic(api_key=key, max_retries=1, timeout=15) as client:
-                await client.models.retrieve(agent.model())
-        except anthropic.AuthenticationError:
-            raise HTTPException(400, "这个 API key 无效，没有保存。检查一下是否复制完整。")
-        except anthropic.PermissionDeniedError:
-            raise HTTPException(400, "这个 API key 没有调用权限，没有保存。")
-        except (anthropic.APIConnectionError, anthropic.APIStatusError):
-            warning = "暂时没法联网验证这个 key，先保存了。发消息时如果报错，再回来检查。"
-        try:
-            credentials.set_api_key(key)
-        except credentials.CredentialError as e:
-            raise HTTPException(500, str(e))
-        return {"ok": True, "key_hint": credentials.key_hint(key), "warning": warning}
+            return None
+        if not key.isascii() or any(c.isspace() for c in key):
+            raise HTTPException(400, "API key 里有空格、中文或其他特殊字符，检查一下是不是复制完整了。")
+        return key
 
-    @app.delete("/api/key")
-    async def delete_key() -> dict[str, Any]:
+    def _store_key(provider_id: str, key: str | None) -> None:
+        if key is None:
+            return
         try:
-            credentials.delete_api_key()
+            credentials.set_key(provider_id, key)
         except credentials.CredentialError as e:
             raise HTTPException(500, str(e))
-        key = credentials.get_api_key()
-        return {"ok": True, "has_key": bool(key), "key_source": credentials.key_source()}
+
+    @app.post("/api/providers")
+    async def create_provider(body: ProviderIn) -> dict[str, Any]:
+        key = _clean_key(body.api_key)
+        try:
+            provider = agent.providers.create(body.name, body.protocol, body.base_url, body.model)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        _store_key(provider.id, key)
+        if body.activate:
+            agent.providers.activate(provider.id)
+        return {"id": provider.id, "providers": agent.providers.describe()}
+
+    @app.put("/api/providers/{provider_id}")
+    async def update_provider(provider_id: str, body: ProviderIn) -> dict[str, Any]:
+        key = _clean_key(body.api_key)
+        try:
+            agent.providers.update(provider_id, body.name, body.protocol, body.base_url, body.model)
+        except KeyError:
+            raise HTTPException(404, "找不到这个服务商")
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        _store_key(provider_id, key)
+        if body.activate:
+            agent.providers.activate(provider_id)
+        return {"id": provider_id, "providers": agent.providers.describe()}
+
+    @app.delete("/api/providers/{provider_id}")
+    async def delete_provider(provider_id: str) -> dict[str, Any]:
+        try:
+            agent.providers.delete(provider_id)
+        except KeyError:
+            raise HTTPException(404, "找不到这个服务商")
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        try:
+            credentials.delete_key(provider_id)
+        except credentials.CredentialError:
+            pass
+        return {"providers": agent.providers.describe(), "active_provider": agent.providers.active().id}
+
+    @app.delete("/api/providers/{provider_id}/key")
+    async def delete_provider_key(provider_id: str) -> dict[str, Any]:
+        try:
+            credentials.delete_key(provider_id)
+        except credentials.CredentialError as e:
+            raise HTTPException(500, str(e))
+        return {"providers": agent.providers.describe()}
+
+    @app.post("/api/providers/{provider_id}/activate")
+    async def activate_provider(provider_id: str) -> dict[str, Any]:
+        try:
+            provider = agent.providers.activate(provider_id)
+        except KeyError:
+            raise HTTPException(404, "找不到这个服务商")
+        return {"active_provider": provider.id, "providers": agent.providers.describe()}
+
+    @app.post("/api/providers/models")
+    async def provider_models(body: ModelsIn) -> dict[str, Any]:
+        """List the endpoint's models with the given (or stored) key. This is the connection test."""
+        key = _clean_key(body.api_key) or (agent.providers.key(body.provider_id) if body.provider_id else None)
+        if not key:
+            raise HTTPException(400, "先填 API key")
+        if body.protocol not in config.PROTOCOLS:
+            raise HTTPException(400, "未知的接口格式")
+        if body.protocol == "openai" and not body.base_url.strip():
+            raise HTTPException(400, "先填接口地址")
+        try:
+            models = await list_models(body.protocol, body.base_url, key)
+        except (anthropic.AuthenticationError, openai.AuthenticationError):
+            raise HTTPException(400, "连上了，但 API key 无效。检查一下 key 是否正确、是否属于这个服务商。")
+        except (anthropic.PermissionDeniedError, openai.PermissionDeniedError):
+            raise HTTPException(400, "连上了，但这个 key 没有权限。")
+        except (anthropic.NotFoundError, openai.NotFoundError):
+            hint = "Anthropic 格式的地址一般不带 /v1。" if body.protocol == "anthropic" else "OpenAI 格式的地址一般要以 /v1 结尾。"
+            raise HTTPException(400, f"这个地址没有提供模型列表。可能是地址不对（{hint}），也可能是服务商不支持查询模型，可以直接手填模型名。")
+        except (anthropic.APIConnectionError, openai.APIConnectionError):
+            raise HTTPException(400, "连不上这个地址。检查一下网络和接口地址。")
+        except (anthropic.APIStatusError, openai.APIStatusError) as e:
+            raise HTTPException(400, f"服务商返回了错误（{e.status_code}）：{e.message}")
+        return {"models": models[:400], "count": len(models)}
 
     # ---------- conversations & chat ----------
 

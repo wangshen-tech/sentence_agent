@@ -22,16 +22,12 @@ import httpx2  # noqa: E402
 import uvicorn  # noqa: E402
 from anthropic import AsyncAnthropic, DefaultAsyncHttpxClient  # noqa: E402
 
-from tests.fake_api import _sse, finish, message_start, text_block, thinking_block, tool_block  # noqa: E402
+from tests.fake_api import _sse, chunk, finish, message_start, openai_text, openai_tool_call, text_block, thinking_block, tool_block  # noqa: E402
 
 CJK = re.compile(r"[㐀-鿿]")
 
 
-def scripted_reply(body: dict) -> list[dict]:
-    last = body["messages"][-1]
-    if any(b.get("type") == "tool_result" for b in last["content"]):
-        return [message_start(3000), *text_block(0, "存好了。", "**sleep on it** 这个说法很常用，", "下次想拖一拖再答复时可以直接用。"), *finish("end_turn")]
-    text = " ".join(b.get("text", "") for b in last["content"] if b.get("type") == "text")
+def pick_tool(text: str) -> tuple[str, dict]:
     if CJK.search(text) and not re.search(r"[A-Za-z]{3,}", text):
         tool = ("save_translation", {
             "zh": text.strip(),
@@ -59,15 +55,47 @@ def scripted_reply(body: dict) -> list[dict]:
             "explanation": "礼貌地回避一个话题。语气比 I don't want to talk about it 柔和。",
             "points": [{"title": "get into (a topic)", "explain": "深入谈论某个话题", "example": "Let's not get into politics.", "example_zh": "咱们别聊政治了。"}],
         })
-    return [message_start(1800), *thinking_block(0, "先判断用户想做什么，再给出地道的说法。"), *tool_block(1, "toolu_" + os.urandom(4).hex(), tool[0], tool[1], pieces=12), *finish("tool_use")]
+    return tool
 
 
-def fake_client() -> AsyncAnthropic:
+REPLY = ("存好了。", "**sleep on it** 这个说法很常用，", "下次想拖一拖再答复时可以直接用。")
+
+
+def anthropic_reply(body: dict) -> list[dict]:
+    last = body["messages"][-1]
+    if any(b.get("type") == "tool_result" for b in last["content"]):
+        return [message_start(3000), *text_block(0, *REPLY), *finish("end_turn")]
+    text = " ".join(b.get("text", "") for b in last["content"] if b.get("type") == "text")
+    name, args = pick_tool(text)
+    return [message_start(1800), *thinking_block(0, "先判断用户想做什么，再给出地道的说法。"), *tool_block(1, "toolu_" + os.urandom(4).hex(), name, args, pieces=12), *finish("tool_use")]
+
+
+def openai_reply(body: dict) -> list[dict]:
+    last = body["messages"][-1]
+    if last["role"] == "tool":
+        return [*openai_text(*REPLY), chunk({}, finish="stop")]
+    name, args = pick_tool(last.get("content") or "")
+    return [chunk({"role": "assistant", "reasoning_content": "（演示）先判断用户想做什么。"}), *openai_tool_call("call_" + os.urandom(4).hex(), name, args, pieces=12), chunk({}, finish="tool_calls")]
+
+
+def fake_anthropic(provider, key) -> AsyncAnthropic:
     def handler(request: httpx2.Request) -> httpx2.Response:
         body = json.loads(request.content)
-        return httpx2.Response(200, headers={"content-type": "text/event-stream"}, content=_sse(scripted_reply(body)))
+        return httpx2.Response(200, headers={"content-type": "text/event-stream"}, content=_sse(anthropic_reply(body)))
 
     return AsyncAnthropic(api_key="sk-ant-dev", http_client=DefaultAsyncHttpxClient(transport=httpx2.MockTransport(handler)))
+
+
+def fake_openai(provider, key):
+    from openai import AsyncOpenAI
+    from openai import DefaultAsyncHttpxClient as OpenAIHttpClient
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        chunks = openai_reply(json.loads(request.content))
+        body = "".join(f"data: {json.dumps(c, ensure_ascii=False)}\n\n" for c in chunks) + "data: [DONE]\n\n"
+        return httpx2.Response(200, headers={"content-type": "text/event-stream"}, content=body.encode())
+
+    return AsyncOpenAI(api_key="sk-dev", base_url=provider.base_url, http_client=OpenAIHttpClient(transport=httpx2.MockTransport(handler)))
 
 
 def seed(store) -> None:
@@ -103,18 +131,18 @@ def main() -> None:
 
     from sentence_agent import config
     from sentence_agent.agent.session import AgentService
+    from sentence_agent.providers import ProviderRegistry
     from sentence_agent.server import create_app
     from sentence_agent.store import Store
 
     store = Store(config.db_path())
     seed(store)
-    agent = AgentService(store, client_factory=fake_client)
+    # The fake clients need no real key; report one for every provider so the UI unlocks.
+    registry = ProviderRegistry(store, get_key=lambda pid: "sk-dev-fake-key-0000", key_source=lambda pid: "keychain")
+    if len(registry.all()) == 1:
+        registry.create("DeepSeek（演示）", "openai", "https://api.deepseek.com", "deepseek-chat")
+    agent = AgentService(store, providers=registry, anthropic_factory=fake_anthropic, openai_factory=fake_openai)
     app = create_app(store, agent, token="dev")
-
-    # The fake client needs no key; report one as present so the UI unlocks.
-    import sentence_agent.credentials as creds
-    creds.get_api_key = lambda: "sk-ant-dev-fake-key"
-    creds.key_source = lambda: "env"
 
     print(f"dev server: http://127.0.0.1:{args.port}/#t=dev  (data: {args.home})", flush=True)
     uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")

@@ -49,8 +49,16 @@ const actions = {
   'end-review': () => review.endReview(),
   'flip-card': () => review.flip(),
   grade: (el) => review.grade(el.dataset.remembered === '1'),
-  'delete-key': () => settings.deleteKey(),
-  'set-model': (el) => settings.setModel(el.dataset.id),
+  'provider-add': () => settings.addProvider(),
+  'provider-edit': (el) => settings.editProvider(el.dataset.id),
+  'provider-cancel': () => settings.cancelForm(),
+  'provider-protocol': (el) => settings.setProtocol(el.dataset.protocol),
+  'provider-pick-model': (el) => settings.pickModel(el.dataset.model),
+  'provider-fetch-models': () => settings.fetchModels(),
+  'provider-save': (el) => settings.saveProvider(el.dataset.activate === '1'),
+  'provider-delete': () => settings.deleteProvider(),
+  'provider-delete-key': () => settings.deleteProviderKey(),
+  'provider-activate': (el) => settings.activateProvider(el.dataset.id),
   'set-effort': (el) => settings.setEffort(el.dataset.id),
   'delete-note': (el) => settings.deleteNote(Number(el.dataset.id)),
   'open-data-dir': () => settings.openDataDir(),
@@ -83,6 +91,9 @@ document.addEventListener('keydown', (e) => {
 async function boot() {
   chat.initChat();
   book.initNotebook();
+  $('#provider-switch').addEventListener('change', (e) => {
+    settings.activateProvider(e.target.value).catch((err) => toast(err.message));
+  });
   try {
     const state = await refreshState();
     await chat.loadThreads();

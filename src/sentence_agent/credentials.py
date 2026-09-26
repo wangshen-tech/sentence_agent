@@ -1,4 +1,4 @@
-"""The Anthropic API key lives in the macOS Keychain, never in the database or on disk in plain text."""
+"""API keys live in the macOS Keychain, one entry per provider — never in the database or on disk in plain text."""
 
 from __future__ import annotations
 
@@ -10,44 +10,53 @@ from keyring.errors import KeyringError, PasswordDeleteError
 from . import APP_NAME
 
 _SERVICE = APP_NAME
-_ACCOUNT = "anthropic-api-key"
+# The official Anthropic provider keeps the account name used before multi-provider support.
+_LEGACY_ANTHROPIC_ACCOUNT = "anthropic-api-key"
 
 
 class CredentialError(RuntimeError):
     pass
 
 
-def get_api_key() -> str | None:
-    """Keychain first (what the user entered in the app), then the ANTHROPIC_API_KEY environment variable."""
+def _account(provider_id: str) -> str:
+    return _LEGACY_ANTHROPIC_ACCOUNT if provider_id == "anthropic" else f"provider:{provider_id}"
+
+
+def get_key(provider_id: str) -> str | None:
+    """Keychain first; the official Anthropic provider also falls back to ANTHROPIC_API_KEY."""
     try:
-        key = keyring.get_password(_SERVICE, _ACCOUNT)
+        key = keyring.get_password(_SERVICE, _account(provider_id))
     except KeyringError:
         key = None
-    return key or os.environ.get("ANTHROPIC_API_KEY") or None
+    if not key and provider_id == "anthropic":
+        key = os.environ.get("ANTHROPIC_API_KEY")
+    return key or None
 
 
-def key_source() -> str | None:
+def key_source(provider_id: str) -> str | None:
     try:
-        if keyring.get_password(_SERVICE, _ACCOUNT):
+        if keyring.get_password(_SERVICE, _account(provider_id)):
             return "keychain"
     except KeyringError:
         pass
-    return "env" if os.environ.get("ANTHROPIC_API_KEY") else None
+    if provider_id == "anthropic" and os.environ.get("ANTHROPIC_API_KEY"):
+        return "env"
+    return None
 
 
-def set_api_key(key: str) -> None:
+def set_key(provider_id: str, key: str) -> None:
     key = key.strip()
     if not key:
         raise CredentialError("API key 不能是空的")
     try:
-        keyring.set_password(_SERVICE, _ACCOUNT, key)
+        keyring.set_password(_SERVICE, _account(provider_id), key)
     except KeyringError as e:
         raise CredentialError(f"没能存进钥匙串：{e}") from e
 
 
-def delete_api_key() -> None:
+def delete_key(provider_id: str) -> None:
     try:
-        keyring.delete_password(_SERVICE, _ACCOUNT)
+        keyring.delete_password(_SERVICE, _account(provider_id))
     except PasswordDeleteError:
         pass
     except KeyringError as e:
@@ -57,4 +66,4 @@ def delete_api_key() -> None:
 def key_hint(key: str | None) -> str | None:
     if not key:
         return None
-    return f"{key[:7]}…{key[-4:]}" if len(key) > 14 else "已设置"
+    return f"{key[:6]}…{key[-4:]}" if len(key) > 14 else "已设置"

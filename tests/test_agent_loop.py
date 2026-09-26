@@ -9,6 +9,7 @@ import pytest
 
 from sentence_agent.agent.session import AgentService
 from sentence_agent.agent.transcript import build_transcript
+from sentence_agent.providers import ProviderRegistry
 from sentence_agent.store import Store
 
 from .fake_api import FakeAPI, finish, message_start, text_block, thinking_block, tool_block
@@ -35,6 +36,11 @@ async def collect(agent: AgentService, conversation_id: int, text: str) -> list[
     return [e async for e in agent.run_turn(conversation_id, text)]
 
 
+def make_agent(store: Store, api: FakeAPI | None = None) -> AgentService:
+    registry = ProviderRegistry(store, get_key=lambda pid: "sk-ant-test", key_source=lambda pid: "keychain")
+    return AgentService(store, providers=registry, anthropic_factory=lambda provider, key: api.client())
+
+
 async def test_translation_turn_saves_card_and_history(store):
     api = FakeAPI(
         [
@@ -42,7 +48,7 @@ async def test_translation_turn_saves_card_and_history(store):
             [message_start(2400), *text_block(0, "记住 ", "**sleep on it** 就好。"), *finish("end_turn")],
         ]
     )
-    agent = AgentService(store, client_factory=api.client)
+    agent = make_agent(store, api)
     cid = agent.new_conversation()
 
     events = await collect(agent, cid, "这事儿我得再考虑考虑怎么说")
@@ -85,7 +91,7 @@ async def test_translation_turn_saves_card_and_history(store):
 
 async def test_request_shape(store):
     api = FakeAPI([[message_start(), *text_block(0, "Hi"), *finish("end_turn")]])
-    agent = AgentService(store, client_factory=api.client)
+    agent = make_agent(store, api)
     cid = agent.new_conversation()
     await collect(agent, cid, "hello")
 
@@ -105,9 +111,9 @@ async def test_request_shape(store):
 
 
 async def test_sonnet_has_no_server_fallbacks(store):
-    store.set_setting("model", "claude-sonnet-5")
     api = FakeAPI([[message_start(), *text_block(0, "Hi"), *finish("end_turn")]])
-    agent = AgentService(store, client_factory=api.client)
+    agent = make_agent(store, api)
+    agent.providers.set_model("anthropic", "claude-sonnet-5")
     await collect(agent, agent.new_conversation(), "hello")
     assert "fallbacks" not in api.requests[0]
     assert "anthropic-beta" not in api.headers[0] or "server-side-fallback" not in api.headers[0]["anthropic-beta"]
@@ -121,7 +127,7 @@ async def test_invalid_tool_input_is_reported_back_to_claude(store):
             [message_start(), *text_block(0, "OK"), *finish("end_turn")],
         ]
     )
-    agent = AgentService(store, client_factory=api.client)
+    agent = make_agent(store, api)
     cid = agent.new_conversation()
     events = await collect(agent, cid, "你好")
     result = [e for e in events if e["type"] == "tool_result"][0]
@@ -132,13 +138,13 @@ async def test_invalid_tool_input_is_reported_back_to_claude(store):
 
 async def test_auth_error_is_a_friendly_event(store):
     api = FakeAPI([httpx2.Response(401, json={"type": "error", "error": {"type": "authentication_error", "message": "invalid x-api-key"}})])
-    agent = AgentService(store, client_factory=api.client)
+    agent = make_agent(store, api)
     events = await collect(agent, agent.new_conversation(), "hi")
     assert events[-1]["type"] == "error" and events[-1]["code"] == "auth"
 
 
 async def test_interrupted_tool_call_is_repaired_before_next_turn(store):
-    agent = AgentService(store, client_factory=lambda: None)  # never called
+    agent = make_agent(store)  # the API is never called
     cid = agent.new_conversation()
     store.append_message(cid, "user", [{"type": "text", "text": "你好"}])
     store.append_message(cid, "assistant", [{"type": "tool_use", "id": "toolu_x", "name": "search_notebook", "input": {"query": "a"}}])
@@ -156,7 +162,7 @@ async def test_refusal_stops_without_running_tools(store):
     api = FakeAPI(
         [[message_start(), *tool_block(0, "toolu_r", "save_translation", TRANSLATION), *finish("refusal")]]
     )
-    agent = AgentService(store, client_factory=api.client)
+    agent = make_agent(store, api)
     cid = agent.new_conversation()
     events = await collect(agent, cid, "x")
     assert any(e["type"] == "notice" for e in events)
